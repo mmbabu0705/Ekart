@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+    
+    tools {
+        jdk 'jdk-17'
+        maven 'maven3'
+    }
+    
+    environment {
+        
+        SCANNER_HOME= tool 'sonar-scanner'
+    }
+
+    stages {
+        stage('git-checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/mmbabu0705/Ekart.git'
+            }
+        }
+        stage('compile-source code') {
+            steps {
+               sh "mvn compile"
+            }
+        }
+        stage('Run the test-cases') {
+            steps {
+               sh "mvn test -DskipTests=true"
+            }
+        }
+        stage('OWASP Scan') {
+            steps {
+               dependencyCheck additionalArguments: ' --scan ./ ', odcInstallation: 'DC'
+                   dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('Trivy-Full-Scan') {
+            steps {
+               sh "trivy fs ."
+            }
+        }
+        stage('Sonarqube Analysis') {
+            steps {
+               withSonarQubeEnv('sonar') {
+                   sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Ekart \
+                   -Dsonar.projectKey=Ekart -Dsonar.java.binaries=. '''
+                }
+            }
+        }
+        stage('Build the package') {
+            steps {
+               sh "mvn package -DskipTests=true"
+            }
+        }
+        stage('Build & Tag the Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh "docker build -t shopping-cart:test -f docker/Dockerfile ."
+                        sh "docker tag shopping-cart:test mmbabu/shopping-cart:test"
+                    }
+                }
+            }
+        }
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh "docker push  mmbabu/shopping-cart:test"
+                    }
+                }
+            }
+        }
+        stage('Deploy in Docker Conatiner') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh "docker run -d -p 8070:8070 mmbabu/shopping-cart:test"
+                    }
+                }
+            }
+        }
+    }
+}
